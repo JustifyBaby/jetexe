@@ -43,25 +43,33 @@ fn main() {
         }
 
         // テンプレート
-        let content = r#"#include <stdio.h>
+        let content = "#include <stdio.h>\n\
+#include <stdbool.h>\n\
+void scan_loop_int(const char *prompt)\n\
+{\n\
+\tint value;
+\twhile (true)
+\t{
+\t\tprintf(\"%s\", prompt);
+\t\tif (scanf(\"%d\", &value) == 1)
+\t\t\treturn value;
 
-#ifdef _WIN32
-    #include <Windows.h>
-    #define UTF_8_CODE (65001)
-#endif
-
-int main()
-{
-    #ifdef _WIN32
-        // UTF-8対応
-        SetConsoleOutputCP(UTF_8_CODE);
-    #endif
-
-    // process
-
-    return 0;
+\t\twhile (getchar() != '\n')
+\t\t;
+\t}
 }
-"#;
+
+bool is_between_int (int min, int x, int max)\n\
+{\n\
+\treturn (min <= x) && (x <= max);
+}\n
+
+int main()\n\
+{\n
+
+\n\
+\treturn 0;\n\
+}\n";
 
         fs::write(file, content).expect("failed to create file");
         println!("Created {}", file);
@@ -79,7 +87,7 @@ int main()
 
     let path = Path::new(file);
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-    let name = path.file_stem().unwrap().to_str().unwrap();
+    // let name = path.file_stem().unwrap().to_str().unwrap();
     let filename = path.file_name().unwrap().to_str().unwrap();
 
     let dir = path.parent().unwrap_or(Path::new("."));
