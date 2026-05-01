@@ -43,33 +43,33 @@ fn main() {
         }
 
         // テンプレート
-        let content = "#include <stdio.h>\n\
-#include <stdbool.h>\n\
-void scan_loop_int(const char *prompt)\n\
-{\n\
-\tint value;
-\twhile (true)
-\t{
-\t\tprintf(\"%s\", prompt);
-\t\tif (scanf(\"%d\", &value) == 1)
-\t\t\treturn value;
+        let content = r#"#include <stdio.h>
+#include <stdbool.h>
 
-\t\twhile (getchar() != '\n')
-\t\t;
-\t}
+void scan_loop_int(const char *prompt)
+{
+	int value;
+	while (true)
+	{
+		printf("%s", prompt);
+		if (scanf("%d", &value) == 1)
+			return value;
+
+		while (getchar() != '\n')
+			;
+	}
 }
 
-bool is_between_int (int min, int x, int max)\n\
-{\n\
-\treturn (min <= x) && (x <= max);
-}\n
+bool is_between_int (int min, int x, int max)
+{
+	return (min <= x) && (x <= max);
+}
 
-int main()\n\
-{\n
-
-\n\
-\treturn 0;\n\
-}\n";
+int main()
+{
+	return 0;
+}
+"#;
 
         fs::write(file, content).expect("failed to create file");
         println!("Created {}", file);
