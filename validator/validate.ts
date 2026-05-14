@@ -1,20 +1,22 @@
 /// <reference types="bun" />
 
-/// <reference types="bun" />
-import z, { date } from "zod";
+import z from "zod";
 import { TestCase, TestSuiteSchema } from "./schema";
+import { join } from "node:path";
 
 interface LogBase {
   status: "success" | "error";
 }
 
 interface Success extends LogBase {
+  status: "success";
   message: null;
   count: number;
   data: TestCase[];
 }
 
 interface Failed extends LogBase {
+  status: "error";
   message: string;
   count: null;
   data: null;
@@ -35,6 +37,7 @@ function parse(rawData: string): Log {
   }
 
   const error = z.treeifyError(allCases.error);
+
   return {
     status: "error",
     message: error.errors.join("\n\n"),
@@ -45,18 +48,25 @@ function parse(rawData: string): Log {
 
 async function typeGuard(): Promise<Log> {
   try {
-    // 🔥 「今ターミナルで開いている場所」のファイルを直接読む（1行で完結！）
-    const file = Bun.file("test_cases.json");
+    // Rustから渡された「元の実行ディレクトリ」を取得
+    const originalCwd = process.env.ORIGINAL_CWD;
+
+    if (!originalCwd) {
+      throw new Error("環境変数 ORIGINAL_CWD が設定されていません");
+    }
+
+    // 💡 元の実行ディレクトリを起点にして test_case.json の絶対パスを作る
+    const testCasePath = join(originalCwd, "test_case.json");
+    const file = Bun.file(testCasePath);
 
     if (!(await file.exists())) {
-      throw new Error("test_cases.json does not found...");
+      throw new Error("test_case.json is not found...");
     }
 
     const rawData = await file.text();
-    return parse(rawData);
 
-    // --- ここから下にテスト実行ループなどを書く ---
-  } catch (error: any) {
+    return parse(rawData);
+  } catch (error: unknown) {
     return {
       status: "error",
       message: String(error),
@@ -67,47 +77,7 @@ async function typeGuard(): Promise<Log> {
 }
 
 async function main() {
-  console.log(JSON.stringify(typeGuard()));
+  console.log(JSON.stringify(await typeGuard()));
 }
 
-main();
-
-/* 
-prompt:
-    test => {
-        // ここを実装
-    }
-
-    testの仕様
-    test_case.jsonを読み取る。
-    test_case.jsonをTypeScriptに渡してバリデーションチェックを行う
-    この際json-schemaで最低限のバリデーションを行って下さい
-    通ればdataから実際にテストのロジックを走らせてください
-    なお、ベースの読み取り関数は定義しています。以下に示しますから参考にしてください。なお、このベースの関数を変えても構いません
-
-    fn run_test_cli() -> Result<(), String> {
-    // 💡 ツールがどこに配置されていても ts/tester.ts を叩けるようにする
-    // あなたの環境に合わせて、CLIソースコードの絶対パスに置き換えてください
-    let ts_script_path = "/path/to/your/cli/ts/tester.ts";
-
-    let output = Command::new("bun")
-        .args(["run", ts_script_path])
-        .current_dir(".") // 🔥 これにより、今ターミナルで開いているフォルダが基準になる！
-        .output()
-        .map_err(|e| format!("Bunの起動に失敗: {}", e))?;
-
-    let stdout_str = String::from_utf8_lossy(&output.stdout);
-
-    let res: BunResponse = serde_json::from_str(&stdout_str)
-        .map_err(|_| format!("パース失敗。生出力: {}", stdout_str))?;
-
-    match res {
-        BunResponse::Success { count } => {
-            println!("✅ 全 {} 件のテストパース成功！", count);
-            Ok(())
-        }
-        BunResponse::Error { message } => Err(message),
-    }
-}
-
- */
+await main();

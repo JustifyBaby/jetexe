@@ -8,7 +8,7 @@ export const TestCaseSchema = z.object({
   // 数値だけでなく文字列も扱えるように union(数値か文字列の配列) にしておくのがおすすめ
   inputs: z.array(z.union([z.number(), z.string()])).default([]),
 
-  // 3. 期待する出力結果（expectから「expect」に直すとより一般的ですが、お好みのままでOKです）
+  // 3. 期待する出力結果
   expect: z.union([z.number(), z.string()]),
 
   // 4. 表示制御（手書き時は省略可能。デフォルトは全表示）

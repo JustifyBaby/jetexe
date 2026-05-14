@@ -1,7 +1,9 @@
+use dotenvy::from_path;
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use serde::Deserialize;
 // TSの「TestCase」構造体に合わせたRustの型
@@ -22,29 +24,57 @@ struct TestCase {
 #[serde(tag = "status", rename_all = "lowercase")]
 enum BunResponse {
     Success {
-        message: Option<String>, // 常にnullなのでOption
+        message: Option<()>,
         count: usize,
-        data: Vec<TestCase>, // Zodをパスした完璧なデータ
+        data: Vec<TestCase>,
     },
+
     Error {
-        message: String, // エラーメッセージが入る
-        count: Option<usize>,
-        data: Option<Vec<TestCase>>,
+        message: String,
+        count: Option<()>,
+        data: Option<()>,
     },
 }
 
-fn run_test_cli() -> Result<(), String> {
-    // 💡 あなたの環境に合わせて、CLIソースコードの絶対パスに置き換えてください
-    let ts_script_path = "/path/to/your/cli/ts/tester.ts";
+fn run_test_cli(arg: &str) -> Result<(), String> {
+    // Cargo.toml があるディレクトリの絶対パスを取得
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+
+    // プロジェクトルート直下の .env へのパスを結合
+    let dotenv_path = Path::new(manifest_dir).join(".env");
+
+    // パスを明示して読み込み
+    from_path(dotenv_path).expect("Failed to load .env from project root");
+
+    // 環境変数を取得
+    let ts_path = env::var("VALIDATOR_PATH").map_err(|e| format!("[ENV] {}", e))?;
+    let ts_dir = Path::new(&ts_path)
+        .parent()
+        .ok_or_else(|| "ts_path の親ディレクトリが取得できません。".to_string())?;
+
+    // 💡 追加: 実行された「元のカレントディレクトリ」の絶対パスを取得
+    let original_cwd =
+        env::current_dir().map_err(|e| format!("カレントディレクトリの取得に失敗: {}", e))?;
 
     println!("🔍 Zodバリデーションチェックを実行中...");
 
     // 1. Bunを叩いて、手書きJSONの整合性チェックとデータ補完を行う
-    let output = Command::new("bun")
-        .args(["run", ts_script_path])
-        .current_dir(".") // 今開いているフォルダを基準にする
-        .output()
-        .map_err(|e| format!("Bunの起動に失敗: {}", e))?;
+    let output = if cfg!(target_os = "windows") {
+        // Windowsの場合は cmd.exe を介して bun コマンドを叩く
+        Command::new("cmd")
+            .args(["/C", "bun", &ts_path])
+            .current_dir(ts_dir)
+            .env("ORIGINAL_CWD", &original_cwd)
+            .output()
+    } else {
+        // Mac / Linux の場合はそのまま bun を叩く
+        Command::new("bun")
+            .args([&ts_path])
+            .current_dir(ts_dir)
+            .env("ORIGINAL_CWD", &original_cwd)
+            .output()
+    }
+    .map_err(|e| format!("Bunの起動に失敗: {}", e))?; // 💡 ここで落ちていたのが直ります
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
 
@@ -58,6 +88,7 @@ fn run_test_cli() -> Result<(), String> {
             // Zodエラーやファイルなしエラーのときは即座に落とす
             Err(format!("バリデーション失敗:\n{}", message))
         }
+
         BunResponse::Success { data, .. } => {
             println!("✅ JSONチェック通過。実際のテストロジックを開始します...\n");
 
@@ -81,6 +112,26 @@ fn run_test_cli() -> Result<(), String> {
             let mut passed = 0;
             let total = target_cases.len();
 
+            let compile = Command::new("gcc").args([arg, "-o", "a.out"]).output();
+
+            match compile {
+                Ok(output) => {
+                    // gcc自体は起動できたが、コンパイル失敗
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+
+                        return Err(format!("コンパイル失敗:\n{}", stderr));
+                    }
+
+                    println!("✅ コンパイル成功");
+                }
+
+                // gccコマンドそのものの起動失敗
+                Err(e) => {
+                    return Err(format!("gcc の起動に失敗しました: {}", e));
+                }
+            }
+
             // 実際のテスト実行ループ
             for tc in target_cases {
                 // inputsをすべて文字列の引数に変換
@@ -93,9 +144,71 @@ fn run_test_cli() -> Result<(), String> {
                     })
                     .collect();
 
-                // 💡 課題のテスト対象プログラム（例: ./a.out）を実行
-                let test_proc = Command::new("./a.out").args(&args).output();
+                // inputs をすべて文字列化
+                let args: Vec<String> = tc
+                    .inputs
+                    .iter()
+                    .map(|v| match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        _ => v.to_string(),
+                    })
+                    .collect();
 
+                // テスト対象プログラム起動
+                let child = Command::new("a.exe")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn();
+
+                match child {
+                    Ok(mut proc) => {
+                        // stdinへ入力を流し込む
+                        {
+                            let stdin = proc.stdin.as_mut().unwrap();
+
+                            for arg in &args {
+                                writeln!(stdin, "{}", arg).unwrap();
+                            }
+                        }
+
+                        // 実行完了待機 + 出力取得
+                        let output = proc.wait_with_output().expect("failed to wait process");
+
+                        let actual = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+                        // expect を文字列化
+                        let expected = match &tc.expect {
+                            serde_json::Value::String(s) => s.trim().to_string(),
+                            _ => tc.expect.to_string().trim().to_string(),
+                        };
+
+                        let is_passed = actual == expected;
+
+                        if is_passed {
+                            passed += 1;
+                        }
+
+                        // ログ表示
+                        if tc.output_display == "watch" {
+                            if is_passed {
+                                println!("  ✅ [パス] {}", tc.name);
+                            } else {
+                                println!(
+                                    "  ❌ [失敗] {}\n     期待値: {}\n     実際の出力: {}",
+                                    tc.name, expected, actual
+                                );
+                            }
+                        }
+                    }
+
+                    Err(e) => {
+                        println!(
+                            "  ❌ [実行エラー] {}: 対象プログラム(a.exe)の起動に失敗しました。({})",
+                            tc.name, e
+                        );
+                    }
+                }
                 match test_proc {
                     Ok(proc_output) => {
                         let actual = String::from_utf8_lossy(&proc_output.stdout)
@@ -185,9 +298,16 @@ int main()
 }
 "#;
 
+    // --- 実行 ---
+    if args.len() < 2 {
+        eprintln!("Usage: jetexe <file.c> [options...]");
+        return;
+    }
+
     match args[1].as_str() {
         "-v" | "--version" => {
             println!("jetexe v{}", env!("CARGO_PKG_VERSION"));
+            return;
         }
 
         "init" => {
@@ -224,72 +344,71 @@ int main()
             fs::write(file, temp_c).expect("failed to create file");
 
             println!("Created {}", file);
+            return;
         }
 
         "test" => {
-            if let Err(e) = run_test_cli() {
+            if let Err(e) = run_test_cli(&args[2]) {
                 eprint!("❌ コマンド実行エラー:\n{}", e)
+            }
+            return;
+        }
+
+        "run" => {
+            let file = &args[2];
+            let extra_args = &args[3..];
+
+            let path = Path::new(file);
+            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+            // let name = path.file_stem().unwrap().to_str().unwrap();
+            let filename = path.file_name().unwrap().to_str().unwrap();
+
+            let dir = path.parent().unwrap_or(Path::new("."));
+
+            match ext {
+                "c" => {
+                    let mut output = dir.join("a.exe");
+
+                    let mut args_with_output = vec![filename.to_string()];
+
+                    let mut i = 0;
+                    while i < extra_args.len() {
+                        if extra_args[i] == "-o" && i + 1 < extra_args.len() {
+                            output = dir.join(format!("{}.exe", extra_args[i + 1]));
+                        }
+                        args_with_output.push(extra_args[i].clone());
+                        i += 1;
+                    }
+
+                    // コンパイル
+                    let status = Command::new("gcc")
+                        .args(&args_with_output)
+                        .current_dir(dir)
+                        .status()
+                        .expect("failed to run gcc");
+
+                    if !status.success() {
+                        eprintln!("Compile failed");
+                        return;
+                    }
+
+                    // 実行
+                    let status = Command::new(&output).status().expect("failed to run exe");
+
+                    if !status.success() {
+                        eprintln!("Execution failed");
+                    }
+                    return;
+                }
+
+                _ => {
+                    eprintln!("Unsupported extension: {}", ext);
+                }
             }
         }
 
         _ => {
             eprintln!("Unknown command: {}", args[1]);
-        }
-    }
-
-    // --- 実行 ---
-    if args.len() < 2 {
-        eprintln!("Usage: jetexe <file.c> [options...]");
-        return;
-    }
-
-    let file = &args[1];
-    let extra_args = &args[2..];
-
-    let path = Path::new(file);
-    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-    // let name = path.file_stem().unwrap().to_str().unwrap();
-    let filename = path.file_name().unwrap().to_str().unwrap();
-
-    let dir = path.parent().unwrap_or(Path::new("."));
-
-    match ext {
-        "c" => {
-            let mut output = dir.join("a.exe");
-
-            let mut args_with_output = vec![filename.to_string()];
-
-            let mut i = 0;
-            while i < extra_args.len() {
-                if extra_args[i] == "-o" && i + 1 < extra_args.len() {
-                    output = dir.join(format!("{}.exe", extra_args[i + 1]));
-                }
-                args_with_output.push(extra_args[i].clone());
-                i += 1;
-            }
-
-            // コンパイル
-            let status = Command::new("gcc")
-                .args(&args_with_output)
-                .current_dir(dir)
-                .status()
-                .expect("failed to run gcc");
-
-            if !status.success() {
-                eprintln!("Compile failed");
-                return;
-            }
-
-            // 実行
-            let status = Command::new(&output).status().expect("failed to run exe");
-
-            if !status.success() {
-                eprintln!("Execution failed");
-            }
-        }
-
-        _ => {
-            eprintln!("Unsupported extension: {}", ext);
         }
     }
 }
