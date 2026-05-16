@@ -3,7 +3,26 @@ use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::process::Output;
 use std::process::{Command, Stdio};
+
+// 1. lang ディレクトリ（フォルダ）をモジュールとして宣言
+mod lang {
+    // 2. その中にある c_lang.rs をモジュールとして宣言
+    pub mod c_lang;
+}
+
+// （参考）commands フォルダも動かない場合は、以下も追加
+mod commands {
+    pub mod init;
+    pub mod run;
+    pub mod test;
+}
+
+mod resolver {
+    pub mod path_resolver;
+    pub mod validator;
+}
 
 use serde::Deserialize;
 // TSの「TestCase」構造体に合わせたRustの型
@@ -36,7 +55,7 @@ enum BunResponse {
     },
 }
 
-fn run_test_cli(arg: &str) -> Result<(), String> {
+fn read_json_zod_parse() -> Result<BunResponse, std::string::String> {
     // Cargo.toml があるディレクトリの絶対パスを取得
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
 
@@ -82,6 +101,147 @@ fn run_test_cli(arg: &str) -> Result<(), String> {
     let res: BunResponse = serde_json::from_str(&stdout_str)
         .map_err(|_| format!("パース失敗。生出力: {}", stdout_str))?;
 
+    Ok(res)
+}
+
+fn run_c_tester(arg: &str) -> Result<Output, std::string::String> {
+    let compile = Command::new("gcc").args([arg]).output();
+
+    match compile {
+        Ok(output) => {
+            // gcc自体は起動できたが、コンパイル失敗
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+
+                return Err(format!("コンパイル失敗:\n{}", stderr));
+            }
+
+            println!("✅ コンパイル成功");
+            return Ok(output);
+        }
+
+        // gccコマンドそのものの起動失敗
+        Err(e) => {
+            return Err(format!("gcc の起動に失敗しました: {}", e));
+        }
+    }
+}
+
+fn test_loop(arg: &str, target_cases: &Vec<&TestCase>) -> Result<usize, String> {
+    let mut passed = 0;
+
+    run_c_tester(arg)?;
+
+    // 実際のテスト実行ループ
+    for tc in target_cases {
+        // inputs をすべて文字列化
+        let args: Vec<String> = tc
+            .inputs
+            .iter()
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                _ => v.to_string(),
+            })
+            .collect();
+
+        let original_cwd =
+            env::current_dir().map_err(|e| format!("カレントディレクトリの取得に失敗: {}", e))?;
+
+        let exe_path = Path::new(&original_cwd).join("a.exe");
+
+        // テスト対象プログラム起動
+        let child = Command::new(exe_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+
+        match child {
+            Ok(mut proc) => {
+                // stdinへ入力を流し込む
+                {
+                    let stdin = proc.stdin.as_mut().unwrap();
+
+                    for arg in &args {
+                        writeln!(stdin, "{}", arg).unwrap();
+                    }
+                }
+
+                // 実行完了待機 + 出力取得
+                let output = proc.wait_with_output().expect("failed to wait process");
+
+                let actual = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+                // expect を文字列化
+                let expected = match &tc.expect {
+                    serde_json::Value::String(s) => s.trim().to_string(),
+                    _ => tc.expect.to_string().trim().to_string(),
+                };
+
+                let is_passed = actual.contains(&expected);
+
+                if is_passed {
+                    passed += 1;
+                }
+
+                // ログ表示
+                match tc.output_display.as_str() {
+                    "watch" => {
+                        println!("{}", actual);
+
+                        println!("\nExpect:");
+                        println!("{}", expected);
+
+                        if is_passed {
+                            println!("\nPass Test");
+                        } else {
+                            println!("\nFailed Test");
+                        }
+                    }
+
+                    "only-last" => {
+                        let last_line = actual.lines().last().unwrap_or("").trim();
+
+                        println!("{}", last_line);
+
+                        println!("\nExpected Including:");
+                        println!("{}", expected);
+
+                        if is_passed {
+                            println!("\nPass Test");
+                        } else {
+                            println!("\nFailed Test");
+                        }
+                    }
+
+                    "none" => {
+                        if is_passed {
+                            println!("Pass Test");
+                        } else {
+                            println!("Failed Test");
+                        }
+                    }
+
+                    _ => {
+                        eprintln!("Unknown output_display mode: {}", tc.output_display);
+                    }
+                }
+            }
+
+            Err(e) => {
+                println!(
+                    "  ❌ [実行エラー] {}: 対象プログラム(a.exe)の起動に失敗しました。({})",
+                    tc.name, e
+                );
+            }
+        }
+    }
+
+    Ok(passed)
+}
+
+fn run_test_cli(arg: &str) -> Result<(), String> {
+    let res = read_json_zod_parse()?;
     // 3. 行うべきテストのロジックを走らせる
     match res {
         BunResponse::Error { message, .. } => {
@@ -109,144 +269,8 @@ fn run_test_cli(arg: &str) -> Result<(), String> {
                 })
                 .collect();
 
-            let mut passed = 0;
+            let passed = test_loop(arg, &target_cases)?;
             let total = target_cases.len();
-
-            let compile = Command::new("gcc").args([arg, "-o", "a.out"]).output();
-
-            match compile {
-                Ok(output) => {
-                    // gcc自体は起動できたが、コンパイル失敗
-                    if !output.status.success() {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-
-                        return Err(format!("コンパイル失敗:\n{}", stderr));
-                    }
-
-                    println!("✅ コンパイル成功");
-                }
-
-                // gccコマンドそのものの起動失敗
-                Err(e) => {
-                    return Err(format!("gcc の起動に失敗しました: {}", e));
-                }
-            }
-
-            // 実際のテスト実行ループ
-            for tc in target_cases {
-                // inputsをすべて文字列の引数に変換
-                let args: Vec<String> = tc
-                    .inputs
-                    .iter()
-                    .map(|v| match v {
-                        serde_json::Value::String(s) => s.clone(),
-                        _ => v.to_string(),
-                    })
-                    .collect();
-
-                // inputs をすべて文字列化
-                let args: Vec<String> = tc
-                    .inputs
-                    .iter()
-                    .map(|v| match v {
-                        serde_json::Value::String(s) => s.clone(),
-                        _ => v.to_string(),
-                    })
-                    .collect();
-
-                // テスト対象プログラム起動
-                let child = Command::new("a.exe")
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn();
-
-                match child {
-                    Ok(mut proc) => {
-                        // stdinへ入力を流し込む
-                        {
-                            let stdin = proc.stdin.as_mut().unwrap();
-
-                            for arg in &args {
-                                writeln!(stdin, "{}", arg).unwrap();
-                            }
-                        }
-
-                        // 実行完了待機 + 出力取得
-                        let output = proc.wait_with_output().expect("failed to wait process");
-
-                        let actual = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-                        // expect を文字列化
-                        let expected = match &tc.expect {
-                            serde_json::Value::String(s) => s.trim().to_string(),
-                            _ => tc.expect.to_string().trim().to_string(),
-                        };
-
-                        let is_passed = actual == expected;
-
-                        if is_passed {
-                            passed += 1;
-                        }
-
-                        // ログ表示
-                        if tc.output_display == "watch" {
-                            if is_passed {
-                                println!("  ✅ [パス] {}", tc.name);
-                            } else {
-                                println!(
-                                    "  ❌ [失敗] {}\n     期待値: {}\n     実際の出力: {}",
-                                    tc.name, expected, actual
-                                );
-                            }
-                        }
-                    }
-
-                    Err(e) => {
-                        println!(
-                            "  ❌ [実行エラー] {}: 対象プログラム(a.exe)の起動に失敗しました。({})",
-                            tc.name, e
-                        );
-                    }
-                }
-                match test_proc {
-                    Ok(proc_output) => {
-                        let actual = String::from_utf8_lossy(&proc_output.stdout)
-                            .trim()
-                            .to_string();
-
-                        // expectの値を文字列に変換して比較
-                        let expected = match &tc.expect {
-                            serde_json::Value::String(s) => s.trim().to_string(),
-                            _ => tc.expect.to_string().trim().to_string(),
-                        };
-
-                        let is_passed = actual == expected;
-
-                        if is_passed {
-                            passed += 1;
-                        }
-
-                        // output_displayの設定に合わせて画面にログを出す
-                        if tc.output_display == "watch" {
-                            if is_passed {
-                                println!("  ✅ [パス] {}", tc.name);
-                            } else {
-                                println!(
-                                    "  ❌ [失敗] {}\n     期待値: {}\n     実際の出力: {}",
-                                    tc.name, expected, actual
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        println!(
-                            "  ❌ [実行エラー] {}: 対象プログラム(./a.out)の起動に失敗しました。({})",
-                            tc.name, e
-                        );
-                    }
-                }
-            }
 
             println!("\n📊 --- テスト結果リポート ---");
             println!("総合結果: {} / {} 件パスしました。", passed, total);
@@ -262,47 +286,6 @@ fn run_test_cli(arg: &str) -> Result<(), String> {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-
-    // テンプレート
-    let temp_c = r#"#include <stdio.h>
-#include <stdbool.h>
-
-typedef const char *String;
-
-int scan_loop_int(String prompt, String error_msg)
-{
-	int value, c;
-	while (true)
-	{
-		printf("%s", prompt);
-		if (scanf("%d", &value) == 1)
-			return value;
-            
-        printf("%s", error_msg);
-		while (
-            ( (c = getchar()) != '\n' ) &&
-            ( c != EOF )
-        )
-			;
-	}
-}
-
-bool is_between_int (int min, int x, int max)
-{
-	return (min <= x) && (x <= max);
-}
-
-int main()
-{
-	return 0;
-}
-"#;
-
-    // --- 実行 ---
-    if args.len() < 2 {
-        eprintln!("Usage: jetexe <file.c> [options...]");
-        return;
-    }
 
     match args[1].as_str() {
         "-v" | "--version" => {
