@@ -1,4 +1,8 @@
-use std::{path::PathBuf, process::Command};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
 
 use crate::resolver::path_resolver::resolve;
 
@@ -32,16 +36,54 @@ fn compile_c(file: &str, gcc_args: &[String]) -> Result<PathBuf, String> {
     Ok(output)
 }
 
-pub fn exe_c(file: &str, gcc_args: &[String]) -> Result<(), String> {
-    let output = compile_c(file, gcc_args)?;
+// 戻り値を Result<String, String> に変更
+pub fn exe_c(filename: &str, gcc_args: &[String]) -> Result<String, String> {
+    let output = compile_c(filename, gcc_args)?;
 
-    // 実行
-    let status = Command::new(&output).status().expect("failed to run exe");
+    // 実行（.output() はプロセスの終了を待ち、出力をキャプチャします）
+    let result = Command::new(&output).output().expect("failed to run exe");
 
-    if !status.success() {
-        eprintln!("Execution failed");
-        return Err("Execution Failed".to_string());
+    // 実行が失敗したかチェック（元のコードのバグ `status()` を `status.success()` に修正）
+    if !result.status.success() {
+        // 標準エラー出力を文字列にしてエラーとして返す
+        let err_msg = String::from_utf8_lossy(&result.stderr).into_owned();
+        eprintln!("Execution failed: {}", err_msg);
+        return Err(err_msg);
     }
 
-    Ok(())
+    // 標準出力を UTF-8 文字列に変換して返す
+    String::from_utf8(result.stdout).map_err(|e| format!("Invalid UTF-8 output: {}", e))
+}
+
+/// 【新設】標準入力（inputs）を指定してCプログラムを実行する
+pub fn exe_c_with_input(
+    filename: &str,
+    gcc_args: &[String],
+    inputs: &[String],
+) -> Result<String, String> {
+    let exe_path = compile_c(filename, gcc_args)?;
+    // 1. プロセスをパイプ付きで起動
+    let mut child = Command::new(&exe_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("プログラムの起動に失敗: {}", e))?;
+
+    // 2. 標準入力（stdin）に入力を流し込む
+    if let Some(mut stdin) = child.stdin.take() {
+        for input in inputs {
+            writeln!(stdin, "{}", input).map_err(|e| format!("stdinへの書き込み失敗: {}", e))?;
+        }
+    }
+
+    // 3. 実行完了を待ち、出力を取得
+    let result = child.wait_with_output().expect("failed to wait process");
+
+    if !result.status.success() {
+        let err_msg = String::from_utf8_lossy(&result.stderr).into_owned();
+        return Err(err_msg);
+    }
+
+    String::from_utf8(result.stdout).map_err(|e| format!("無効なUTF-8出力です: {}", e))
 }

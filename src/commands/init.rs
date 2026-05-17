@@ -41,7 +41,7 @@ int main()
 "#,
 };
 
-fn init_c(user_input_args: Vec<String>) {
+pub fn init_c(user_input_args: Vec<String>) {
     if user_input_args.len() < 3 {
         eprintln!("Usage: jetexe init <file.c>");
         return;
