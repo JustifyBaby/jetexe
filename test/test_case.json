@@ -1,0 +1,10 @@
+[
+  {
+    "name": "enter_name",
+    "inputs": [10],
+    "expect": "Hello, World! REF: p10\n",
+    "output_display": "watch",
+    "skip": false,
+    "only": false
+  }
+]

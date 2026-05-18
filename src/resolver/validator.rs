@@ -19,6 +19,7 @@ pub struct TestCase {
 // TSから返ってくる「Log」型（Discriminated Union）をマッピングするEnum
 #[derive(Deserialize, Debug)]
 #[serde(tag = "status", rename_all = "lowercase")]
+#[allow(dead_code)]
 pub enum BunResponse {
     Success {
         message: Option<()>,
@@ -33,7 +34,9 @@ pub enum BunResponse {
     },
 }
 
-pub fn read_json_zod_parse() -> Result<BunResponse, String> {
+pub fn read_json_zod_parse(filename: &str) -> Result<BunResponse, String> {
+    let project_path = Path::new(filename).parent().unwrap_or(Path::new("."));
+
     // Cargo.toml があるディレクトリの絶対パスを取得
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
 
@@ -55,13 +58,15 @@ pub fn read_json_zod_parse() -> Result<BunResponse, String> {
 
     println!("🔍 Zodバリデーションチェックを実行中...");
 
+    let json_path = original_cwd.join(project_path);
+
     // 1. Bunを叩いて、手書きJSONの整合性チェックとデータ補完を行う
     let output = if cfg!(target_os = "windows") {
         // Windowsの場合は cmd.exe を介して bun コマンドを叩く
         Command::new("cmd")
             .args(["/C", "bun", &ts_path])
             .current_dir(ts_dir)
-            .env("ORIGINAL_CWD", &original_cwd)
+            .env("ORIGINAL_CWD", &json_path)
             .output()
     } else {
         // Mac / Linux の場合はそのまま bun を叩く

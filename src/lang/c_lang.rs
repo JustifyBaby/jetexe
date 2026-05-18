@@ -1,13 +1,17 @@
 use std::{
     io::Write,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Stdio},
 };
 
-use crate::resolver::path_resolver::resolve;
+use crate::resolver::path_resolver::{ResolvedPath, resolve};
 
 fn compile_c(file: &str, gcc_args: &[String]) -> Result<PathBuf, String> {
-    let (_, filename, dir) = resolve(file);
+    let ResolvedPath {
+        ext: _,
+        filename,
+        dir,
+    } = resolve(file);
     let mut args_with_output = vec![filename.to_string()];
 
     let mut output = dir.join("a.exe");
@@ -36,26 +40,25 @@ fn compile_c(file: &str, gcc_args: &[String]) -> Result<PathBuf, String> {
     Ok(output)
 }
 
-// 戻り値を Result<String, String> に変更
-pub fn exe_c(filename: &str, gcc_args: &[String]) -> Result<String, String> {
+pub fn exe_c(filename: &str, gcc_args: &[String]) -> Result<(), String> {
     let output = compile_c(filename, gcc_args)?;
 
-    // 実行（.output() はプロセスの終了を待ち、出力をキャプチャします）
-    let result = Command::new(&output).output().expect("failed to run exe");
+    // .stdin/.stdout/.stderr を現在のターミナルに直結する
+    let status = Command::new(&output)
+        .stdin(Stdio::inherit()) // キーボード入力を受け付ける
+        .stdout(Stdio::inherit()) // 画面にその場で表示する
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|e| format!("failed to run exe: {}", e))?;
 
-    // 実行が失敗したかチェック（元のコードのバグ `status()` を `status.success()` に修正）
-    if !result.status.success() {
-        // 標準エラー出力を文字列にしてエラーとして返す
-        let err_msg = String::from_utf8_lossy(&result.stderr).into_owned();
-        eprintln!("Execution failed: {}", err_msg);
-        return Err(err_msg);
+    if !status.success() {
+        return Err("Execution failed".to_string());
     }
 
-    // 標準出力を UTF-8 文字列に変換して返す
-    String::from_utf8(result.stdout).map_err(|e| format!("Invalid UTF-8 output: {}", e))
+    Ok(())
 }
 
-/// 【新設】標準入力（inputs）を指定してCプログラムを実行する
+/// 標準入力（inputs）を指定してCプログラムを実行する
 pub fn exe_c_with_input(
     filename: &str,
     gcc_args: &[String],

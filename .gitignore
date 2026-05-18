@@ -1,3 +1,6 @@
 /target
 node_modules
+
 .env
+/test/*.exe
+/test/*.out

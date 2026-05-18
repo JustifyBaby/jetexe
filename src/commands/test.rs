@@ -1,5 +1,3 @@
-use std::env;
-
 use crate::{
     lang::c_lang::exe_c_with_input,
     resolver::validator::{BunResponse, TestCase, read_json_zod_parse},
@@ -10,6 +8,7 @@ fn test_loop(filename: &str, target_cases: &Vec<&TestCase>) -> Result<usize, Str
 
     // 実際のテスト実行ループ
     for tc in target_cases {
+        println!("Testing... {}", tc.name);
         // inputs をすべて文字列化
         let inputs: Vec<String> = tc
             .inputs
@@ -19,9 +18,6 @@ fn test_loop(filename: &str, target_cases: &Vec<&TestCase>) -> Result<usize, Str
                 _ => v.to_string(),
             })
             .collect();
-
-        // let original_cwd =
-        //     env::current_dir().map_err(|e| format!("カレントディレクトリの取得に失敗: {}", e))?;
 
         let actual = exe_c_with_input(filename, &[], &inputs)?;
 
@@ -84,8 +80,8 @@ fn test_loop(filename: &str, target_cases: &Vec<&TestCase>) -> Result<usize, Str
     Ok(passed)
 }
 
-fn run_test_cli(filename: &str) -> Result<(), String> {
-    let res = read_json_zod_parse()?;
+pub fn run_test_cli(filename: &str) -> Result<(), String> {
+    let res = read_json_zod_parse(filename)?;
     // 3. 行うべきテストのロジックを走らせる
     match res {
         BunResponse::Error { message, .. } => {
