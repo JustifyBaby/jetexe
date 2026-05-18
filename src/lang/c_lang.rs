@@ -3,8 +3,7 @@ use std::{
     path::PathBuf,
     process::{Command, Stdio},
 };
-
-use crate::resolver::path_resolver::{ResolvedPath, resolve};
+use crate::resolver::path_resolver::{resolve, ResolvedPath};
 
 fn compile_c(file: &str, gcc_args: &[String]) -> Result<PathBuf, String> {
     let ResolvedPath {
@@ -12,12 +11,22 @@ fn compile_c(file: &str, gcc_args: &[String]) -> Result<PathBuf, String> {
         filename,
         dir,
     } = resolve(file);
+
+    // 1. gcc に渡すソースファイル名は、resolve が切り出した純粋な filename のみ
     let mut args_with_output = vec![filename.to_string()];
 
     let mut output = dir.join("a.exe");
 
     let mut i = 0;
     while i < gcc_args.len() {
+        // 💡 修正ポイント:
+        // ユーザー引数（gcc_args）の中に、大元の「file（例: test/test.c）」が
+        // そのまま紛れ込んでいたら、重複して gcc に渡さないようにスキップする
+        if gcc_args[i] == file {
+            i += 1;
+            continue;
+        }
+
         if gcc_args[i] == "-o" && i + 1 < gcc_args.len() {
             output = dir.join(format!("{}.exe", gcc_args[i + 1]));
         }
@@ -25,10 +34,10 @@ fn compile_c(file: &str, gcc_args: &[String]) -> Result<PathBuf, String> {
         i += 1;
     }
 
-    // コンパイル
+    // （以下、gccの実行処理はそのまま）
     let status = Command::new("gcc")
         .args(&args_with_output)
-        .current_dir(dir)
+        .current_dir(dir) // resolve が切り出した正しい dir ("test")
         .status()
         .expect("failed to run gcc");
 

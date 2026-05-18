@@ -42,7 +42,7 @@ fn main() {
         }
 
         "test" => {
-            match ext {
+            match ext.as_str() {
                 "c" => {
                     if let Err(e) = run_test_cli(&args[2]) {
                         eprint!("❌ コマンド実行エラー:\n{}", e)
@@ -57,13 +57,13 @@ fn main() {
 
         "run" => {
             let gcc_args = &args[3..];
-            match ext {
+            match ext.as_str() {
                 "c" => {
                     let log_start = format!("====== Lang: {} STANDARD OUTPUT ======", ext);
                     let closer = "=".repeat(log_start.chars().count());
 
                     println!("{}\n", log_start);
-                    if let Err(e) = exe_c(filename, gcc_args) {
+                    if let Err(e) = exe_c(&filename, gcc_args) {
                         eprintln!("Error: {}", e);
                     }
 
