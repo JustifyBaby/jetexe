@@ -113,8 +113,8 @@ test_case.json
 
 typedef const char *String;
 
-#define DEFINE_SCAN_LOOP(_type, format) \
-_type scan_loop_##_type (const char* prompt, const char* error_msg) { \
+#define DEFINE_SCAN_LOOP(type, format) \
+type scan_loop_##type (const char* prompt, const char* error_msg) { \
     type value; \
     int c; \
     while (true) { \
