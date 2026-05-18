@@ -26,7 +26,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let ResolvedPath {
         ext,
-        filename,
+        filename: _,
         dir: _,
     } = resolver::path_resolver::resolve(&args[2]);
 
@@ -63,7 +63,7 @@ fn main() {
                     let closer = "=".repeat(log_start.chars().count());
 
                     println!("{}\n", log_start);
-                    if let Err(e) = exe_c(&filename, gcc_args) {
+                    if let Err(e) = exe_c(&args[2], gcc_args) {
                         eprintln!("Error: {}", e);
                     }
 

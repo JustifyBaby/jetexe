@@ -1,9 +1,9 @@
+use crate::resolver::path_resolver::{ResolvedPath, resolve};
 use std::{
     io::Write,
     path::PathBuf,
     process::{Command, Stdio},
 };
-use crate::resolver::path_resolver::{resolve, ResolvedPath};
 
 fn compile_c(file: &str, gcc_args: &[String]) -> Result<PathBuf, String> {
     let ResolvedPath {
@@ -37,9 +37,9 @@ fn compile_c(file: &str, gcc_args: &[String]) -> Result<PathBuf, String> {
     // （以下、gccの実行処理はそのまま）
     let status = Command::new("gcc")
         .args(&args_with_output)
-        .current_dir(dir) // resolve が切り出した正しい dir ("test")
+        .current_dir(&dir) // resolve が切り出した正しい dir ("test")
         .status()
-        .expect("failed to run gcc");
+        .map_err(|e| format!("failed to run gcc: {}", e))?;
 
     if !status.success() {
         eprintln!("Compile failed");
