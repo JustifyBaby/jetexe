@@ -1,9 +1,0 @@
-{
-  "rust-analyzer.linkedProjects": ["C:/Users/quron/dev/rust/jetexe/Cargo.toml"],
-  "json.schemas": [
-    {
-      "fileMatch": ["**/test_case.json"],
-      "url": "./validator/schema.json"
-    }
-  ]
-}
