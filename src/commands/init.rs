@@ -12,7 +12,7 @@ const TEMPLATE: Template = Template {
 typedef const char *String;
 
 #define DEFINE_SCAN_LOOP(type, format) \
-    type scan_loop_##type (const char* prompt, const char* error_msg) { \
+    type scan_loop_##type (String prompt, String error_msg) { \
         type value; \
         int c; \
         while (true) { \
