@@ -24,13 +24,14 @@ typedef const char *String;
         } \
     }
 
+#define DEFINE_IS_BETWEEN(type)                        \
+    bool is_between_##type(type min, type x, type max) \
+    {                                                  \
+    return (min <= x) && (x <= max);               \
+    }
+
 DEFINE_SCAN_LOOP(int, "%d");
-
-bool is_between_int (int min, int x, int max)
-{
-	return (min <= x) && (x <= max);
-}
-
+DEFINE_IS_BETWEEN(int);
 
 int main()
 {
